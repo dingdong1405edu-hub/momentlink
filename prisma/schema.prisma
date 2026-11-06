@@ -1,0 +1,861 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// -------------------------------------------------------------
+// 14.1 Core Auth, Content, Media
+// -------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  emailVerified DateTime?
+  passwordHash  String?
+  image         String?
+  status        String    @default("ACTIVE") // ACTIVE, SUSPENDED, DEACTIVATED
+  locale        String    @default("vi-VN")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  sessions             Session[]
+  roles                RoleAssignment[]
+  invitations          Invitation[]
+  assets               Asset[]
+  orders               Order[]
+  entitlements         Entitlement[]
+  affiliateProfile     AffiliateProfile?
+  shopMemberships      ShopMembership[]
+  giftCardsOwned       GiftCard[]
+  shopRequestsMade     ShopRequest[]
+  auditLogs            AuditLog[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model RoleAssignment {
+  id        String   @id @default(cuid())
+  userId    String
+  role      String   // ADMIN, CREATOR, AFFILIATE, SHOP_OWNER, SHOP_STAFF
+  grantedBy String?
+  grantedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@index([role])
+}
+
+model OccasionCategory {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  title     String
+  icon      String?
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  occasions Occasion[]
+}
+
+model Occasion {
+  id            String   @id @default(cuid())
+  categoryId    String
+  slug          String   @unique
+  title         String
+  formPresetKey String   // wedding, graduation, birthday, love, generic
+  active        Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  metadataJson  String?  // JSON string
+  createdAt     DateTime @default(now())
+
+  category    OccasionCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  templates   Template[]
+  invitations Invitation[]
+
+  @@index([categoryId])
+}
+
+model Template {
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  title        String
+  occasionId   String?
+  status       String   @default("PUBLISHED") // DRAFT, PUBLISHED, ARCHIVED
+  coverAssetId String?
+  isPremium    Boolean  @default(false)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  occasion Occasion?         @relation(fields: [occasionId], references: [id], onDelete: SetNull)
+  versions TemplateVersion[]
+
+  @@index([occasionId, status])
+}
+
+model TemplateVersion {
+  id              String   @id @default(cuid())
+  templateId      String
+  version         Int      @default(1)
+  definitionJson  String   // JSON template structure, default blocks, theme defaults
+  rendererVersion String   @default("v1")
+  publishedAt     DateTime @default(now())
+
+  template    Template     @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  invitations Invitation[]
+
+  @@unique([templateId, version])
+}
+
+model Invitation {
+  id                String    @id @default(cuid())
+  ownerId           String
+  occasionId        String
+  templateVersionId String
+  slug              String    @unique
+  title             String
+  status            String    @default("DRAFT") // DRAFT, PUBLISHED, ARCHIVED
+  privacyMode       String    @default("UNLISTED") // UNLISTED, PASSWORD, PUBLIC, ARCHIVED
+  passcodeHash      String?
+  allowIndexing     Boolean   @default(false)
+  expiresAt         DateTime?
+  publishedAt       DateTime?
+  currentRevisionId String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  owner           User                       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  occasion        Occasion                   @relation(fields: [occasionId], references: [id])
+  templateVersion TemplateVersion            @relation(fields: [templateVersionId], references: [id])
+  revisions       InvitationRevision[]
+  assets          InvitationAsset[]
+  shareLinks      ShareLink[]
+  exportJobs      ExportJob[]
+  rsvps           RSVPResponse[]
+  guestbook       GuestbookMessage[]
+  interactions    InteractionResponse[]
+  statsDaily      InvitationEventStatsDaily[]
+  entitlements    Entitlement[]
+  cardBindings    GiftCardBinding[]
+  shopRequests    ShopRequest[]
+
+  @@index([ownerId, status])
+  @@index([slug])
+}
+
+model InvitationRevision {
+  id            String   @id @default(cuid())
+  invitationId  String
+  versionNumber Int
+  contentJson   String   // JSON string
+  themeJson     String?  // JSON string
+  createdBy     String
+  createdAt     DateTime @default(now())
+
+  invitation Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@unique([invitationId, versionNumber])
+  @@index([invitationId])
+}
+
+model Asset {
+  id          String   @id @default(cuid())
+  uploaderId  String
+  storageKey  String   @unique
+  mimeType    String
+  byteSize    Int
+  width       Int?
+  height      Int?
+  duration    Int?
+  visibility  String   @default("PRIVATE") // PRIVATE, PUBLIC
+  scanStatus  String   @default("CLEAN")   // PENDING, CLEAN, FLAGGED
+  createdAt   DateTime @default(now())
+
+  uploader         User                @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+  invitationAssets InvitationAsset[]
+  shopProductAssets ShopProductAsset[]
+
+  @@index([uploaderId])
+}
+
+model InvitationAsset {
+  id           String   @id @default(cuid())
+  invitationId String
+  assetId      String
+  usage        String   @default("GALLERY") // COVER, GALLERY, MUSIC, AVATAR
+  createdAt    DateTime @default(now())
+
+  invitation Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+  asset      Asset      @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([invitationId, assetId, usage])
+}
+
+model ShareLink {
+  id           String   @id @default(cuid())
+  invitationId String
+  shortCode    String   @unique
+  status       String   @default("ACTIVE")
+  label        String?
+  scanCount    Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  invitation Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@index([shortCode])
+}
+
+model ExportJob {
+  id             String   @id @default(cuid())
+  invitationId   String
+  revisionId     String?
+  requesterId    String
+  format         String   // PNG, JPG, PDF
+  sizePreset     String   // POSTER_4_5, STORY_9_16, A4, A5
+  status         String   @default("QUEUED") // QUEUED, PROCESSING, SUCCEEDED, FAILED
+  storageKey     String?
+  errorCode      String?
+  attemptCount   Int      @default(0)
+  idempotencyKey String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  invitation Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, idempotencyKey])
+  @@index([status, createdAt])
+}
+
+model UsageCounter {
+  id           String  @id @default(cuid())
+  userId       String
+  invitationId String?
+  featureKey   String
+  periodKey    String
+  count        Int     @default(0)
+
+  @@unique([userId, featureKey, periodKey])
+}
+
+// -------------------------------------------------------------
+// 14.2 Guest Response & Event
+// -------------------------------------------------------------
+
+model RSVPResponse {
+  id                String   @id @default(cuid())
+  invitationId      String
+  guestName         String
+  status            String   // ATTENDING, DECLINED, MAYBE
+  guestCount        Int      @default(1)
+  email             String?
+  phone             String?
+  message           String?
+  responseTokenHash String?
+  moderationStatus  String   @default("APPROVED") // APPROVED, SPAM
+  createdAt         DateTime @default(now())
+
+  invitation Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@index([invitationId, createdAt])
+}
+
+model GuestbookMessage {
+  id           String    @id @default(cuid())
+  invitationId String
+  displayName  String
+  body         String
+  status       String    @default("PENDING") // PENDING, APPROVED, HIDDEN, REJECTED
+  createdAt    DateTime  @default(now())
+  reviewedAt   DateTime?
+
+  invitation Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@index([invitationId, status])
+}
+
+model InteractionResponse {
+  id           String   @id @default(cuid())
+  invitationId String
+  blockId      String
+  optionId     String
+  displayName  String?
+  createdAt    DateTime @default(now())
+
+  invitation Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@index([invitationId, blockId])
+}
+
+model InvitationEventStatsDaily {
+  id                String   @id @default(cuid())
+  invitationId      String
+  dayUTC            String   // YYYY-MM-DD
+  views             Int      @default(0)
+  uniqueApproxViews Int      @default(0)
+  qrScans           Int      @default(0)
+  rsvpCount         Int      @default(0)
+  shares            Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  invitation Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@unique([invitationId, dayUTC])
+}
+
+model AbuseReport {
+  id               String   @id @default(cuid())
+  publicTargetType String   // INVITATION, GUESTBOOK, SHOP
+  publicTargetId   String
+  reporterEmail    String?
+  reason           String
+  status           String   @default("OPEN") // OPEN, REVIEWING, RESOLVED, DISMISSED
+  reviewerId       String?
+  createdAt        DateTime @default(now())
+
+  @@index([publicTargetId])
+}
+
+// -------------------------------------------------------------
+// 14.3 Billing + Finance
+// -------------------------------------------------------------
+
+model Plan {
+  id                 String   @id @default(cuid())
+  code               String   @unique // FREE, BASIC, PREMIUM, EVENT_PRO
+  name               String
+  active             Boolean  @default(true)
+  basePriceVnd       Int      // integer minor unit VND
+  defaultDurationDays Int     @default(30)
+  sortOrder          Int      @default(0)
+  createdAt          DateTime @default(now())
+
+  features     PlanFeature[]
+  entitlements Entitlement[]
+}
+
+model PlanFeature {
+  id         String @id @default(cuid())
+  planId     String
+  featureKey String
+  valueJson  String // JSON string: { allowed: true, quota: 10, watermark: false }
+
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, featureKey])
+}
+
+model Order {
+  id                  String    @id @default(cuid())
+  buyerId             String
+  orderNumber         String    @unique
+  status              String    @default("PENDING") // PENDING, TRANSFER_SUBMITTED, PAID, CANCELLED, REFUNDED
+  currency            String    @default("VND")
+  subtotalVnd         Int       @default(0)
+  discountVnd         Int       @default(0)
+  taxVnd              Int       @default(0)
+  totalVnd            Int       @default(0)
+  paymentStatus       String    @default("UNPAID") // UNPAID, TRANSFER_SUBMITTED, PAID, REFUNDED
+  paidAt              DateTime?
+  referredAffiliateId String?
+  purchaseContext     String?   // JSON string
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  buyer           User             @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  lines           OrderLine[]
+  paymentAttempts PaymentAttempt[]
+  commissions     Commission[]
+  refunds         Refund[]
+
+  @@index([buyerId, createdAt])
+  @@index([orderNumber])
+}
+
+model OrderLine {
+  id                 String  @id @default(cuid())
+  orderId            String
+  productType        String  // DIGITAL_PLAN, PHYSICAL_ITEM, QR_CARD
+  referenceId        String? // planId or productId
+  titleSnapshot      String
+  quantity           Int     @default(1)
+  unitPriceVnd       Int
+  discountVnd        Int     @default(0)
+  taxVnd             Int     @default(0)
+  totalVnd           Int
+  commissionEligible Boolean @default(true)
+
+  order        Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  entitlements Entitlement[]
+
+  @@index([orderId])
+}
+
+model PaymentAttempt {
+  id              String    @id @default(cuid())
+  orderId         String
+  provider        String    // manual_review, vnpay, payos
+  providerRef     String?
+  status          String    @default("PENDING") // PENDING, PAID, FAILED
+  amountVnd       Int
+  idempotencyKey  String?
+  paidAt          DateTime?
+  rawSafeMetadata String?   // JSON string
+  createdAt       DateTime  @default(now())
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  refunds Refund[]
+
+  @@index([orderId])
+}
+
+model PaymentWebhookEvent {
+  id                String    @id @default(cuid())
+  provider          String
+  providerEventId   String
+  signatureVerified Boolean   @default(false)
+  processedAt       DateTime?
+  status            String    @default("RECEIVED")
+  payloadHash       String
+  createdAt         DateTime  @default(now())
+
+  @@unique([provider, providerEventId])
+}
+
+model Entitlement {
+  id                String    @id @default(cuid())
+  ownerId           String
+  invitationId      String?
+  sourceOrderLineId String?
+  planId            String
+  status            String    @default("ACTIVE") // ACTIVE, EXPIRED, REVOKED
+  beginsAt          DateTime  @default(now())
+  expiresAt         DateTime?
+  createdAt         DateTime  @default(now())
+
+  owner          User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  invitation     Invitation? @relation(fields: [invitationId], references: [id], onDelete: SetNull)
+  sourceOrderLine OrderLine? @relation(fields: [sourceOrderLineId], references: [id], onDelete: SetNull)
+  plan           Plan       @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, status])
+}
+
+model Refund {
+  id                String   @id @default(cuid())
+  orderId           String
+  paymentAttemptId  String?
+  amountVnd         Int
+  reason            String
+  status            String   @default("COMPLETED")
+  providerRefundRef String?
+  createdAt         DateTime @default(now())
+
+  order          Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentAttempt PaymentAttempt? @relation(fields: [paymentAttemptId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+}
+
+// -------------------------------------------------------------
+// 14.4 CTV / Affiliate / Commission
+// -------------------------------------------------------------
+
+model AffiliateProfile {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  status                String    @default("APPLIED") // APPLIED, APPROVED, REJECTED, SUSPENDED
+  payoutAccount         String?   // masked / encrypted
+  payoutBankCode        String?
+  termsVersionAcceptedAt DateTime?
+  approvedBy            String?
+  approvedAt            DateTime?
+  createdAt             DateTime  @default(now())
+
+  user           User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  links          AffiliateLink[]
+  commissions    Commission[]
+  ledgerEntries  CommissionLedgerEntry[]
+  payoutRequests PayoutRequest[]
+
+  @@index([status])
+}
+
+model AffiliateProgram {
+  id              String   @id @default(cuid())
+  code            String   @unique // DEFAULT_10
+  name            String
+  rateBps         Int      @default(1000) // 1000 bps = 10.00%
+  attributionDays Int      @default(30)
+  holdDays        Int      @default(14)
+  minPayoutVnd    Int      @default(100000)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  links       AffiliateLink[]
+  commissions Commission[]
+}
+
+model AffiliateLink {
+  id          String   @id @default(cuid())
+  affiliateId String
+  programId   String
+  code        String   @unique // ABCD1234
+  campaign    String?
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+
+  affiliate AffiliateProfile @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  program   AffiliateProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+  clicks    ReferralClick[]
+
+  @@index([code])
+}
+
+model ReferralClick {
+  id                     String   @id @default(cuid())
+  affiliateLinkId        String
+  anonymousVisitorKeyHash String?
+  occurredAt             DateTime @default(now())
+  landingPath            String   @default("/")
+  deviceClass            String?
+  isValid                Boolean  @default(true)
+
+  link AffiliateLink @relation(fields: [affiliateLinkId], references: [id], onDelete: Cascade)
+
+  @@index([affiliateLinkId, occurredAt])
+}
+
+model ReferralAttribution {
+  id               String   @id @default(cuid())
+  userId           String?
+  anonymousKeyHash String?
+  affiliateId      String
+  programId        String
+  firstClickAt     DateTime @default(now())
+  lastClickAt      DateTime @default(now())
+  expiresAt        DateTime
+  sourceLinkId     String?
+  createdAt        DateTime @default(now())
+
+  @@index([anonymousKeyHash])
+  @@index([userId])
+}
+
+model Commission {
+  id                     String    @id @default(cuid())
+  orderId                String
+  affiliateId            String
+  programId              String
+  programRateBpsSnapshot Int       @default(1000)
+  eligibleBaseVnd        Int
+  amountVnd              Int       // floor(eligibleBaseVnd * rateBps / 10000)
+  status                 String    @default("PENDING") // PENDING, AVAILABLE, REVERSED, PAID
+  holdUntil              DateTime
+  approvedAt             DateTime?
+  createdAt              DateTime  @default(now())
+
+  order         Order                   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  affiliate     AffiliateProfile        @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  program       AffiliateProgram        @relation(fields: [programId], references: [id], onDelete: Cascade)
+  ledgerEntries CommissionLedgerEntry[]
+
+  @@unique([orderId, programId])
+  @@index([affiliateId, status, holdUntil])
+}
+
+model CommissionLedgerEntry {
+  id             String   @id @default(cuid())
+  commissionId   String?
+  affiliateId    String
+  payoutId       String?
+  type           String   // EARNED, REVERSAL, ADJUSTMENT, PAYOUT_DEBIT
+  amountVnd      Int      // signed integer (+ or -)
+  effectiveAt    DateTime @default(now())
+  idempotencyKey String   @unique
+  metadata       String?  // JSON string
+  createdAt      DateTime @default(now())
+
+  commission    Commission?       @relation(fields: [commissionId], references: [id], onDelete: SetNull)
+  affiliate     AffiliateProfile  @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  payoutRequest PayoutRequest?    @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+
+  @@index([affiliateId, effectiveAt])
+}
+
+model PayoutRequest {
+  id                String    @id @default(cuid())
+  affiliateId       String
+  amountVnd         Int
+  status            String    @default("REQUESTED") // REQUESTED, RESERVED, PAID, REJECTED
+  requestAt         DateTime  @default(now())
+  reviewedBy        String?
+  paidAt            DateTime?
+  externalReference String?
+  rejectionReason   String?
+  createdAt         DateTime  @default(now())
+
+  affiliate     AffiliateProfile        @relation(fields: [affiliateId], references: [id], onDelete: Cascade)
+  ledgerEntries CommissionLedgerEntry[]
+
+  @@index([affiliateId, status])
+}
+
+// -------------------------------------------------------------
+// 14.5 Shop + QR Card
+// -------------------------------------------------------------
+
+model Shop {
+  id                String   @id @default(cuid())
+  ownerId           String
+  slug              String   @unique
+  name              String
+  description       String?
+  status            String   @default("PENDING") // PENDING, APPROVED, REJECTED, SUSPENDED
+  city              String
+  district          String?
+  address           String?
+  phone             String?
+  contactEmail      String?
+  verificationNotes String?
+  policyUrl         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  memberships  ShopMembership[]
+  products     ShopProduct[]
+  requests     ShopRequest[]
+  batches      GiftCardBatch[]
+  cardsAssigned GiftCard[]
+
+  @@index([status, city])
+}
+
+model ShopMembership {
+  id        String   @id @default(cuid())
+  shopId    String
+  userId    String
+  role      String   @default("STAFF") // OWNER, STAFF
+  createdAt DateTime @default(now())
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, userId])
+}
+
+model ShopProduct {
+  id             String   @id @default(cuid())
+  shopId         String
+  slug           String
+  title          String
+  category       String   // hoa tươi, quà sinh nhật, gấu bông, thiệp giấy, quà tùy chỉnh
+  description    String?
+  minPriceVnd    Int?
+  maxPriceVnd    Int?
+  leadTimeHours  Int      @default(24)
+  qrCompatible   Boolean  @default(true)
+  active         Boolean  @default(true)
+  imageUrl       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  shop     Shop               @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  assets   ShopProductAsset[]
+  requests ShopRequest[]
+
+  @@unique([shopId, slug])
+  @@index([shopId, active])
+}
+
+model ShopProductAsset {
+  id            String @id @default(cuid())
+  shopProductId String
+  assetId       String
+  orderIndex    Int    @default(0)
+
+  product ShopProduct @relation(fields: [shopProductId], references: [id], onDelete: Cascade)
+  asset   Asset       @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([shopProductId])
+}
+
+model ShopRequest {
+  id                String    @id @default(cuid())
+  buyerId           String
+  shopId            String
+  productId         String?
+  invitationId      String?
+  requestedQty      Int       @default(1)
+  note              String?
+  deliveryCity      String?
+  deliveryAddress   String?   // encrypted/restricted in production
+  recipientPhone    String?   // encrypted/restricted in production
+  recipientName     String?
+  desiredDeliveryAt DateTime?
+  status            String    @default("SUBMITTED") // SUBMITTED, QUOTED, ACCEPTED, IN_PROGRESS, COMPLETED, DECLINED, CANCELLED
+  finalQuotedVnd    Int?
+  consentVersion    String    @default("v1.0")
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  buyer      User               @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  shop       Shop               @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  product    ShopProduct?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  invitation Invitation?        @relation(fields: [invitationId], references: [id], onDelete: SetNull)
+  events     ShopRequestEvent[]
+
+  @@index([shopId, status])
+  @@index([buyerId])
+}
+
+model ShopRequestEvent {
+  id             String   @id @default(cuid())
+  shopRequestId  String
+  actorId        String
+  previousStatus String
+  nextStatus     String
+  note           String?
+  createdAt      DateTime @default(now())
+
+  request ShopRequest @relation(fields: [shopRequestId], references: [id], onDelete: Cascade)
+
+  @@index([shopRequestId, createdAt])
+}
+
+model GiftCardBatch {
+  id             String    @id @default(cuid())
+  createdBy      String
+  label          String
+  quantity       Int
+  status         String    @default("CREATED") // CREATED, INVENTORIED, ASSIGNED
+  exportedAt     DateTime?
+  assignedShopId String?
+  createdAt      DateTime  @default(now())
+
+  assignedShop Shop?      @relation(fields: [assignedShopId], references: [id], onDelete: SetNull)
+  cards        GiftCard[]
+
+  @@index([status])
+}
+
+model GiftCard {
+  id                   String    @id @default(cuid())
+  batchId              String
+  publicCode           String    @unique // Code in QR: /gift/[publicCode]
+  activationSecretHash String    // SHA-256(secret + pepper)
+  cardType             String    @default("GIFT_TAG") // LOVE_CARD, GRAD_CARD, BIRTHDAY_CARD, WEDDING_CARD, GIFT_TAG
+  status               String    @default("CREATED") // CREATED, INVENTORIED, ASSIGNED, CLAIMED, ACTIVE, REVOKED
+  ownerId              String?
+  assignedShopId       String?
+  claimedAt            DateTime?
+  revokedAt            DateTime?
+  createdAt            DateTime  @default(now())
+
+  batch        GiftCardBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  owner        User?               @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  assignedShop Shop?               @relation(fields: [assignedShopId], references: [id], onDelete: SetNull)
+  bindings     GiftCardBinding[]
+  scansDaily   GiftCardScanDaily[]
+
+  @@index([publicCode])
+  @@index([ownerId])
+  @@index([status])
+}
+
+model GiftCardBinding {
+  id           String   @id @default(cuid())
+  giftCardId   String
+  invitationId String
+  createdBy    String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  giftCard   GiftCard   @relation(fields: [giftCardId], references: [id], onDelete: Cascade)
+  invitation Invitation @relation(fields: [invitationId], references: [id], onDelete: Cascade)
+
+  @@index([giftCardId, active])
+}
+
+model GiftCardScanDaily {
+  id         String   @id @default(cuid())
+  giftCardId String
+  dayUTC     String   // YYYY-MM-DD
+  scans      Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  giftCard GiftCard @relation(fields: [giftCardId], references: [id], onDelete: Cascade)
+
+  @@unique([giftCardId, dayUTC])
+}
+
+// -------------------------------------------------------------
+// 14.6 Audit / System
+// -------------------------------------------------------------
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  actorId       String?
+  actorRole     String?
+  action        String   // USER_LOGIN, INVITATION_PUBLISHED, ORDER_PAID, PAYOUT_SETTLED, CARD_CLAIMED, etc.
+  resourceType  String   // User, Invitation, Order, Commission, GiftCard, Shop
+  resourceId    String
+  beforeSummary String?  // JSON string
+  afterSummary  String?  // JSON string
+  reason        String?
+  ipHash        String?
+  createdAt     DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([resourceType, resourceId])
+  @@index([createdAt])
+}
+
+model OutboxEvent {
+  id            String    @id @default(cuid())
+  topic         String
+  aggregateType String
+  aggregateId   String
+  payloadJson   String
+  status        String    @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([status, nextAttemptAt])
+}
+
+model FeatureFlag {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  enabled   Boolean  @default(false)
+  metadata  String?
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  valueJson String
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
+
